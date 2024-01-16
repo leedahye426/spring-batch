@@ -1,5 +1,10 @@
 package com.ll.springbatch.batch;
 
+import com.ll.springbatch.domain.product.product.entity.Product;
+import com.ll.springbatch.domain.product.product.entity.ProductLog;
+import com.ll.springbatch.domain.product.product.repository.ProductLogRepository;
+import com.ll.springbatch.domain.product.product.repository.ProductRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobScope;
@@ -8,19 +13,24 @@ import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.Chunk;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.data.builder.RepositoryItemReaderBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.stereotype.Component;
+import org.springframework.data.domain.Sort;
 import org.springframework.transaction.PlatformTransactionManager;
 
-import java.util.List;
+import java.util.Collections;
 
 @Configuration
+@RequiredArgsConstructor
 public class MakeProductLogJobConfig {
+    private final int CHUNK_SIZE = 50;
+    private final ProductRepository productRepository;
+    private final ProductLogRepository productLogRepository;
+
     @Bean
     public Job makeProductLogJob(JobRepository jobRepository, Step makeProductLogStep1) {
         return new JobBuilder("makeProductLogJob", jobRepository)
@@ -33,55 +43,46 @@ public class MakeProductLogJobConfig {
     @Bean
     public Step makeProductLogStep1(
             JobRepository jobRepository,
-            Hello4Step1Reader makeProductLogStep1Reader,
-            Hello4Step1Processor makeProductLogStep1Processor,
-            Hello4Step1Writer makeProductLogStep1Writer,
+            ItemReader<Product> step1Reader,
+            ItemProcessor<Product, ProductLog> step1Processor,
+            ItemWriter<ProductLog> step1Writer,
             PlatformTransactionManager platformTransactionManager
     ) {
         return new StepBuilder("makeProductLogStep1Tasklet", jobRepository)
-                .<Integer, String>chunk(10, platformTransactionManager)
-                .reader(makeProductLogStep1Reader)
-                .processor(makeProductLogStep1Processor)
-                .writer(makeProductLogStep1Writer)
+                .<Product, ProductLog>chunk(CHUNK_SIZE, platformTransactionManager)
+                .reader(step1Reader)
+                .processor(step1Processor)
+                .writer(step1Writer)
                 .build();
     }
 
-    // 원본 데이터 읽기
     @StepScope
-    @Component
-    public static class Hello4Step1Reader implements ItemReader<Integer> {
-        @Override
-        public Integer read() {
-            int no = (int) (Math.random() * 500);
-
-            if (no == 100) return null;
-
-            return no;
-        }
+    @Bean
+    public ItemReader<Product> step1Reader() {
+        return new RepositoryItemReaderBuilder<Product>()
+                .name("step1Reader")
+                .repository(productRepository)
+                .methodName("findAll")
+                .pageSize(CHUNK_SIZE)
+                .sorts(Collections.singletonMap("id", Sort.Direction.ASC))
+                .build();
     }
 
-    // 원본 데이터 가공해서 파생 데이터 생성
-    // EX : 50 -> "no. 50"
     @StepScope
-    @Component
-    public static class Hello4Step1Processor implements ItemProcessor<Integer, String> {
-        @Override
-        public String process(Integer item) {
-            return "no. " + item;
-        }
+    @Bean
+    public ItemProcessor<Product, ProductLog> step1Processor() {
+        return product -> ProductLog
+                .builder()
+                .product(product)
+                .name(product.getName())
+                .build();
     }
 
-    // 파생 데이터를 화면에 출력
     @StepScope
-    @Component
-    public static class Hello4Step1Writer implements ItemWriter<String> {
-
-        @Override
-        public void write(Chunk<? extends String> chunk) {
-            List<String> items = (List<String>) chunk.getItems();
-            for (String item : items) {
-                System.out.println("item = " + item);
-            }
-        }
+    @Bean
+    public ItemWriter<ProductLog> step1Writer() {
+        return items -> items.forEach(item -> {
+            productLogRepository.save(item);
+        });
     }
 }
